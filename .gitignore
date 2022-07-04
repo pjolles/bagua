@@ -18,5 +18,10 @@ dbg.h
 /public/**/*.html
 /public/index.js
 .data/
+data/
 /_build/
 /venv/
+examples/data/
+Pipfile
+Pipfile.lock
+.eggs/
