@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from time import sleep
 from numpy import dtype, indices
 from bagua.torch_api import communication
 from bagua.torch_api.bucket import BaguaBucket
@@ -76,39 +77,49 @@ class SidcoImpl(AlgorithmImpl):
             for btensor in bucket.tensors:
                 tensor = btensor.bagua_getter_closure()
                 name = btensor.bagua_tensor_name
-                size = btensor.size()
 
                 logging.info("compressing tensor {} ...".format(name))
                 indices, values = self.compressors[name].compress(tensor, ada_stages=False) #TODO adapt stages
                 
                 logging.info("gathering indices and values...")
-                all_ind = torch.zeros((nranks,) + indices.size(), device='cuda', dtype=torch.int64)
-                communication.gather(indices, all_ind, 0)
-
-                all_val = torch.zeros((nranks,) + values.size(), device='cuda')
-                communication.gather(values, all_val, 0)
+                recv_ind = []
+                for t in indices:
+                    all_t = torch.zeros((nranks,) + indices[0].size(), device='cuda', dtype=torch.int64)
+                    communication.gather(t, all_t, 0)
+                    recv_ind.append(all_t)
+                
+                recv_val = torch.zeros(((nranks,) + values.size()), device='cuda')
+                communication.gather(values, recv_val, 0)
 
                 logging.info("creating and filling new tensor")
-                newtensor = torch.zeros_like(tensor)
+                new_tensor = torch.zeros_like(tensor)
                 counter = torch.zeros_like(tensor)
-                for j in range(0, len(all_ind)):
-                    for k in range(len(all_ind[0])):
-                        ind = tuple(all_ind[j][k].cpu().numpy())
-                        newtensor[ind] = (counter[ind] * newtensor[ind] + all_val[j][k]) / (counter[ind] + 1)
-                        counter[ind] += 1
+                for i in range(nranks):
+                    ind = ()
+                    for recv_ind_dim in recv_ind:
+                        ind = ind + (recv_ind_dim[i],)
+                    new_tensor[ind] += recv_val[i]
+                    counter[ind] += 1
+                
+                counter = counter + (counter == 0)
+                new_tensor.div_(counter)
 
                 logging.info("recompressing tensor for broadcasting...")
-                indices, values = self.compressors[name].compress(newtensor, ada_stages=False)
-
+                indices, values = self.compressors[name].compress(new_tensor, ada_stages=False)
                 logging.info("broadcasting indices and values...")
-                communication.broadcast(indices, 0)
+                new_indices = ()
+                for t in indices:
+                    communication.broadcast(t, 0)
+                    new_indices = new_indices + (t,)
+                indices = new_indices
                 communication.broadcast(values, 0)
 
                 logging.info("decompressing tensor...")
-                tensor = self.compressors[name].decompress(size, indices, values, tensor)
+                tensor = self.compressors[name].decompress(indices, values, tensor)
 
                 btensor.bagua_setter_closure(tensor)
 
+                #sleep(0.5) #TODO remove!
 
         bucket.append_python_op(allgather)
 

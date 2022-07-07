@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 from bagua.torch_api.tensor import BaguaTensor
 import logging
+import time
 
 
 class Compressor():
@@ -45,66 +46,99 @@ class Compressor():
                 tensor_copy = tensor.clone()
                 tensor = tensor.view(-1)
                 tensor_copy2 = tensor_copy.view(-1)
-                for i in range(len(tensor_copy2)):
-                    if tensor_copy2[i] < threshold:
-                        tensor_copy2[i] = 0
+                ones = tensor_copy2 > threshold
+                tensor_copy2.mul_(ones)
                 return tensor_copy
             
+            start = time.time()
+            logging.debug("Tensor of size {}:".format(tensor.size()))
+
             for i in range(self.stages):
                 ratio_per_stage = math.pow(self.target_ratio, 1/self.stages)
+                thresh_start = time.time()
                 threshold = thresh_estimation_exp(tensor, ratio_per_stage)
+                thresh_end = time.time()
                 tensor = apply_threshold(tensor, threshold)
+                thresh_apply = time.time()
+                logging.debug("{:.4f}: thresh_estimation_exp()".format(thresh_end - thresh_start))
+                logging.debug("{:.4f}: apply_threshold()".format(thresh_apply-thresh_end))
 
             numel = tensor.numel()
             k = math.ceil(self.target_ratio * numel)
 
-            indices = tensor.nonzero().type(torch.int64).to(device='cuda')
-            values = torch.tensor([tensor[tuple(index)] for index in indices], device='cuda')
+            start_indices = time.time()
+            indices = tensor.nonzero(as_tuple=True)
+            end_indices = time.time()
+            logging.debug("{:.4f}: creating index tensor".format(end_indices-start_indices))
+            values = tensor[indices]
+            #values = torch.tensor([tensor[tuple(index)] for index in indices], device='cuda')
+            end_values = time.time()
+            logging.debug("{:.4f}: creating value tensor".format(end_values-end_indices))
+
 
             if ada_stages:
+                start_ada = time.time()
                 self.iterations += 1
                 
                 self.k_total += values.numel()
 
                 if self.iterations % self.adaptation_freq == 0:
                     self.stages = adapt_stages()
-                    logging.info("adapted to", self.stages, "stages")
+                    logging.info("adapted to {} stages".format(self.stages))
                     self.k_total = 0
-            
+                end_ada = time.time()
+                logging.debug("{:.4f}: Stage adaptation".format(end_ada-start_ada))
 
             if fixed_size:
+                start_adjust = time.time()
                 k_temp = values.numel()
                 if k_temp < k:
                     #print("padding tensor")
-                    indsize = list(indices.size())
-                    indsize[0] = k
-                    indsize = tuple(indsize)
-                    new_ind = torch.zeros(indsize, device='cuda', dtype=torch.int64)
-                    new_ind[0:k_temp] = indices
-                    indices = new_ind
+                    new_indices = ()
+                    for t in indices:
+                        new_t = torch.zeros(k, device='cuda', dtype=torch.int64)
+                        new_t[0:k_temp] = t
+                        new_indices = new_indices + (new_t,)
+                    indices = new_indices
 
-                    valsize = list(values.size())
-                    valsize[0] = k
-                    valsize = tuple(valsize)
-                    new_val = torch.zeros(valsize, device='cuda')
+                    new_val = torch.zeros(k, device='cuda')
                     new_val[0:k_temp] = values
                     values = new_val
+
+                    end_padding = time.time()
+                    logging.debug("{:.4f}: padding".format(end_padding-start_adjust))
 
                 if k_temp > k:
                     # TODO take random elements instead of the first k
                     #print("shortening tensor")
-                    indices = indices[0:k]
-                    values = values[0:k]
+                    new_indices = ()
+                    for t in indices:
+                        new_t = t[0:k]
+                        new_indices = new_indices + (new_t,)
+                    indices = new_indices
 
+                    values = values[0:k]
+                    end_shortening = time.time()
+                    logging.debug("{:.4f}: shortening".format(end_shortening-start_adjust))
+
+            end = time.time()
+            logging.debug("{:.4f}: Total compression time".format(end-start))
 
             return indices, values
 
-    def decompress(self, size: Tensor, indices: Tensor, values: Tensor, out:Tensor =None):
+    def decompress(self, indices: Tensor, values: Tensor, out: Tensor = None, size: torch.Size = None):
         #with torch.no_grad():
+
+            start = time.time()
+
             if out is None:
+                if size is None:
+                    raise Exception("Either size or out tensor must be given")
                 out = torch.zeros(size=[d for d in size])
 
-            for index, value in zip(indices, values):
-                out[tuple(index)] = value
+            out[indices] = values
+            
+            end = time.time()
+            logging.debug("{:.4f}: Total decompression time".format(end-start))
 
             return out
