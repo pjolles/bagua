@@ -167,8 +167,8 @@ def main():
     parser.add_argument(
         "--algorithm",
         type=str,
-        default="gradient_allreduce",
-        help="gradient_allreduce, bytegrad, decentralized, low_precision_decentralized, qadam, async",
+        default="sidco",
+        help="gradient_allreduce, bytegrad, decentralized, low_precision_decentralized, qadam, async, sidco",
     )
     parser.add_argument(
         "--async-sync-interval",
@@ -188,6 +188,18 @@ def main():
         default=False,
         help="fuse optimizer or not",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="net",
+        help="net or mininet",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="info",
+        help="debug, info, warning, error",
+    )
 
     args = parser.parse_args()
     if args.set_deterministic:
@@ -203,9 +215,18 @@ def main():
     torch.cuda.set_device(bagua.get_local_rank())
     bagua.init_process_group()
 
+    if args.log_level == "debug":
+        log_level = logging.DEBUG
+    elif args.log_level == "info":
+        log_level = logging.INFO
+    elif args.log_level == "warning":
+        log_level = logging.WARNING
+    elif args.log_level == "error":
+        log_level = logging.ERROR
+
     logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.ERROR)
     if bagua.get_rank() == 0:
-        logging.getLogger().setLevel(logging.INFO)
+        logging.getLogger().setLevel(log_level)
 
     train_kwargs = {"batch_size": args.batch_size}
     test_kwargs = {"batch_size": args.test_batch_size}
@@ -242,8 +263,10 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
-    model = Net().cuda()
-    #model = MiniNet().cuda()
+    if args.model == "net":
+        model = Net().cuda()
+    elif args.model == "mininet":
+        model = MiniNet().cuda()
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
 
     if args.algorithm == "gradient_allreduce":
@@ -275,11 +298,12 @@ def main():
         algorithm = async_model_average.AsyncModelAverageAlgorithm(
             sync_interval_ms=args.async_sync_interval,
         )
+    elif args.algorithm == "sidco":
+        from sidco import Sidco
+
+        algorithm = Sidco()
     else:
         raise NotImplementedError
-
-    from sidco import Sidco
-    algorithm = Sidco()
 
     model = model.with_bagua(
         [optimizer],
