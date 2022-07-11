@@ -128,16 +128,12 @@ class Compressor():
 
     def decompress(self, indices: Tensor, values: Tensor, out: Tensor = None, size: torch.Size = None):
         #with torch.no_grad():
-
             start = time.time()
-
             if out is None:
                 if size is None:
                     raise Exception("Either size or out tensor must be given")
-                out = torch.zeros(size=[d for d in size])
-
+                out = torch.zeros(size=[d for d in size], device='cuda')
             out[indices] = values
-            
             end = time.time()
             logging.debug("{:.4f}: Total decompression time".format(end-start))
 
