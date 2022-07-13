@@ -69,19 +69,23 @@ class SidcoImpl(AlgorithmImpl):
     ):
         bucket.clear_ops()
 
+        # for some reason without this the cuda memory quickly fills up
+        for bucket in bagua_ddp.bagua_buckets:
+            pass
 
         def allgather(*args):
             nranks = len(bagua_ddp.process_group.ranks)
 
 
             for btensor in bucket.tensors:
-                tensor = btensor.bagua_getter_closure()
-                name = btensor.bagua_tensor_name
 
-                logging.info("compressing tensor {} ...".format(name))
+                name = btensor.bagua_tensor_name
+                tensor = btensor.bagua_getter_closure()
+
+                logging.debug("compressing tensor {} ...".format(name))
                 indices, values = self.compressors[name].compress(tensor, ada_stages=False) #TODO adapt stages
                 
-                logging.info("gathering indices and values...")
+                logging.debug("gathering indices and values...")
                 recv_ind = []
                 for t in indices:
                     all_t = torch.zeros((nranks,) + indices[0].size(), device='cuda', dtype=torch.int64)
@@ -91,7 +95,7 @@ class SidcoImpl(AlgorithmImpl):
                 recv_val = torch.zeros(((nranks,) + values.size()), device='cuda')
                 communication.gather(values, recv_val, 0)
 
-                logging.info("creating and filling new tensor")
+                logging.debug("creating and filling new tensor")
                 new_tensor = torch.zeros_like(tensor)
                 counter = torch.zeros_like(tensor)
                 for i in range(nranks):
@@ -104,9 +108,10 @@ class SidcoImpl(AlgorithmImpl):
                 counter = counter + (counter == 0)
                 new_tensor.div_(counter)
 
-                logging.info("recompressing tensor for broadcasting...")
+                logging.debug("recompressing tensor for broadcasting...")
                 indices, values = self.compressors[name].compress(new_tensor, ada_stages=False)
-                logging.info("broadcasting indices and values...")
+
+                logging.debug("broadcasting indices and values...")
                 new_indices = ()
                 for t in indices:
                     communication.broadcast(t, 0)
@@ -114,7 +119,7 @@ class SidcoImpl(AlgorithmImpl):
                 indices = new_indices
                 communication.broadcast(values, 0)
 
-                logging.info("decompressing tensor...")
+                logging.debug("decompressing tensor...")
                 tensor = self.compressors[name].decompress(indices, values, tensor)
 
                 btensor.bagua_setter_closure(tensor)
