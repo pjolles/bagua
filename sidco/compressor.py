@@ -16,15 +16,25 @@ class Compressor():
     stages = 2
     target_stages = 4 # 
     first_ratio = 0.25
-    target_ratio = 0.4
     adaptation_freq = 1
     epsilon_h = 0.1
     epsilon_l = 0.1
     max_stages = 100
 
+    
+    def __init__(self, ratio: float = 0.5) -> None:
+        self.target_ratio = ratio
 
 
-    def compress(self, tensor: Tensor, fixed_size = True, ada_stages = True):
+    def compress(
+        self, 
+        tensor: Tensor, 
+        fixed_size = True, 
+        ada_stages = True, 
+        indices: Tensor = None, 
+        values: Tensor = None,
+        ):
+
         # not sure if this is useful
         #with torch.no_grad():
 
@@ -44,15 +54,15 @@ class Compressor():
 
             def apply_threshold(tensor: Tensor, threshold):
                 tensor_copy = tensor.clone()
-                tensor = tensor.view(-1)
                 tensor_copy2 = tensor_copy.view(-1)
-                ones = tensor_copy2 > threshold
+                abs_tensor_copy = tensor.clone().abs().view(-1)
+                ones = abs_tensor_copy > threshold
                 tensor_copy2.mul_(ones)
                 return tensor_copy
             
             start = time.time()
-            logging.debug("Tensor of size {}:".format(tensor.size()))
 
+            logging.debug("Tensor of size {}:".format(tensor.size()))
             for i in range(self.stages):
                 ratio_per_stage = math.pow(self.target_ratio, 1/self.stages)
                 thresh_start = time.time()
@@ -71,7 +81,6 @@ class Compressor():
             end_indices = time.time()
             logging.debug("{:.4f}: creating index tensor".format(end_indices-start_indices))
             values = tensor[indices]
-            #values = torch.tensor([tensor[tuple(index)] for index in indices], device='cuda')
             end_values = time.time()
             logging.debug("{:.4f}: creating value tensor".format(end_values-end_indices))
 
