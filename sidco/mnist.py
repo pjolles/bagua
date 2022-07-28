@@ -1,5 +1,6 @@
 from __future__ import print_function
 import argparse
+import matplotlib.pyplot as plt
 import numpy as np
 import random
 import torch
@@ -85,7 +86,7 @@ def train(args, model, train_loader, optimizer, epoch):
             )
 
 
-def test(model, test_loader):
+def test(model, test_loader, losses=None, epoch=None):
     model.eval()
     test_loss = 0
     correct = 0
@@ -111,6 +112,9 @@ def test(model, test_loader):
             100.0 * correct / len(test_loader.dataset),
         )
     )
+
+    if losses is not None and epoch is not None:
+        losses[epoch-1] = test_loss
 
 
 def main():
@@ -199,6 +203,12 @@ def main():
         type=str,
         default="info",
         help="debug, info, warning, error",
+    )
+    parser.add_argument(
+        "--ratio",
+        type=float,
+        default=0.1,
+        help="compression ratio for sidco algorithm",
     )
 
     args = parser.parse_args()
@@ -302,7 +312,7 @@ def main():
     elif args.algorithm == "sidco":
         from sidco import Sidco
 
-        algorithm = Sidco()
+        algorithm = Sidco(ratio=args.ratio)
     elif args.algorithm == "test":
         import algotest
 
@@ -320,6 +330,9 @@ def main():
         optimizer = bagua.contrib.fuse_optimizer(optimizer)
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
+
+    losses = np.zeros(args.epochs)
+
     for epoch in range(1, args.epochs + 1):
         if args.algorithm == "async":
             model.bagua_algorithm.resume(model)
@@ -329,8 +342,19 @@ def main():
         if args.algorithm == "async":
             model.bagua_algorithm.abort(model)
 
-        test(model, test_loader)
+        test(model, test_loader, losses, epoch)
         scheduler.step()
+
+    fig, ax = plt.subplots()
+    ax.plot(losses)
+    ax.set_title("algorithm: " + args.algorithm + ", ratio (only if applicable): " + str(args.ratio))
+    ax.set_xlabel('epoch')
+    ax.set_ylabel('loss')
+    ax.set_xticks(np.arange(0, args.epochs))
+    ax.set_ylim(0)
+    ax.grid(True)
+
+    plt.savefig("plot.png")
 
     if args.save_model:
         torch.save(model.state_dict(), "mnist_cnn.pt")
