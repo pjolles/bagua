@@ -267,6 +267,7 @@ def main():
         model = Net().cuda()
     elif args.model == "mininet":
         model = MiniNet().cuda()
+    
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
 
     if args.algorithm == "gradient_allreduce":
@@ -302,6 +303,10 @@ def main():
         from sidco import Sidco
 
         algorithm = Sidco()
+    elif args.algorithm == "test":
+        import algotest
+
+        algorithm = algotest.TestAlgorithm()
     else:
         raise NotImplementedError
 

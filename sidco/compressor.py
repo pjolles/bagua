@@ -22,7 +22,7 @@ class Compressor():
     max_stages = 100
 
     
-    def __init__(self, ratio: float = 0.5) -> None:
+    def __init__(self, ratio: float = 0.1) -> None:
         self.target_ratio = ratio
 
 
@@ -68,9 +68,9 @@ class Compressor():
                 thresh_start = time.time()
                 threshold = thresh_estimation_exp(tensor, ratio_per_stage)
                 thresh_end = time.time()
+                logging.debug("{:.4f}: thresh_estimation_exp()".format(thresh_end - thresh_start))
                 tensor = apply_threshold(tensor, threshold)
                 thresh_apply = time.time()
-                logging.debug("{:.4f}: thresh_estimation_exp()".format(thresh_end - thresh_start))
                 logging.debug("{:.4f}: apply_threshold()".format(thresh_apply-thresh_end))
 
             numel = tensor.numel()

@@ -25,7 +25,7 @@ class SidcoImpl(AlgorithmImpl):
         process_group: BaguaProcessGroup,
         hierarchical: bool = False,
         average: bool = True,
-        ratio: float = 0.4
+        ratio: float = 0.1
     ):
         """
         Implementation of the
@@ -52,15 +52,15 @@ class SidcoImpl(AlgorithmImpl):
 
     # One tensor into one bucket for now
     # TODO: remove this and make the init_operations() work with multiple tensors per bucket
-    def tensors_to_buckets(
-        self, tensors: List[List[BaguaTensor]], do_flatten: bool
-    ) -> List[BaguaBucket]:
-        bagua_buckets = []
-        for id1, tensorlist in enumerate(tensors):
-            for id2, tensor in enumerate(tensorlist):
-                bagua_bucket = BaguaBucket(tensors=[tensor], name=str(id1) + "-" +str(id2), flatten=True)
-                bagua_buckets.append(bagua_bucket)
-        return bagua_buckets
+    # def tensors_to_buckets(
+    #     self, tensors: List[List[BaguaTensor]], do_flatten: bool
+    # ) -> List[BaguaBucket]:
+    #     bagua_buckets = []
+    #     for id1, tensorlist in enumerate(tensors):
+    #         for id2, tensor in enumerate(tensorlist):
+    #             bagua_bucket = BaguaBucket(tensors=[tensor], name=str(id1) + "-" +str(id2), flatten=True)
+    #             bagua_buckets.append(bagua_bucket)
+    #     return bagua_buckets
 
 
     def init_operations(
@@ -71,7 +71,7 @@ class SidcoImpl(AlgorithmImpl):
         bucket.clear_ops()
         nranks = len(bagua_ddp.process_group.ranks)
 
-
+        # Initialize the tensors to be exchanged
         indices = {}
         values = {}
         recv_indices = {}
@@ -88,17 +88,6 @@ class SidcoImpl(AlgorithmImpl):
                     nranks, math.ceil(self.ratio * t.numel()), dtype=torch.int64, device='cuda'),)
             values[name] = torch.zeros(math.ceil(self.ratio * t.numel()), device='cuda')
             recv_values[name] = torch.zeros(nranks, math.ceil(self.ratio * t.numel()), device='cuda')
-
-        print(indices.keys())
-        # tensor = {}
-        # indices = {}
-        # values = {}
-        # recv_ind = {}
-        # recv_val = {}
-        # new_tensor = {}
-        # counter = {}
-        # new_indices
-
 
         def allgather(*args):
 
@@ -171,7 +160,7 @@ class SidcoImpl(AlgorithmImpl):
 
 
 class Sidco(Algorithm):
-    def __init__(self, hierarchical: bool = False, average: bool = True, ratio: float = 0.4):
+    def __init__(self, hierarchical: bool = False, average: bool = True, ratio: float = 0.1):
         """
         Create an instance of the
         `GradientAllReduce <https://tutorials.baguasys.com/algorithms/gradient-allreduce>`_
