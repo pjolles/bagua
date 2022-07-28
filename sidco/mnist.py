@@ -86,7 +86,7 @@ def train(args, model, train_loader, optimizer, epoch):
             )
 
 
-def test(model, test_loader, losses=None, epoch=None):
+def test(model, test_loader, accuracies=None, losses=None, epoch=None):
     model.eval()
     test_loss = 0
     correct = 0
@@ -113,6 +113,8 @@ def test(model, test_loader, losses=None, epoch=None):
         )
     )
 
+    if accuracies is not None and epoch is not None:
+        accuracies[epoch-1] = correct / len(test_loader.dataset)
     if losses is not None and epoch is not None:
         losses[epoch-1] = test_loss
 
@@ -331,6 +333,7 @@ def main():
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
 
+    accuracies = np.zeros(args.epochs, dtype=float)
     losses = np.zeros(args.epochs)
 
     for epoch in range(1, args.epochs + 1):
@@ -342,7 +345,7 @@ def main():
         if args.algorithm == "async":
             model.bagua_algorithm.abort(model)
 
-        test(model, test_loader, losses, epoch)
+        test(model, test_loader, accuracies, losses, epoch)
         scheduler.step()
 
     fig, ax = plt.subplots()
@@ -353,8 +356,18 @@ def main():
     ax.set_xticks(np.arange(0, args.epochs))
     ax.set_ylim(0)
     ax.grid(True)
+    plt.savefig("mnist-" + str(args.algorithm) + "-" + str(args.ratio) + "-loss.png")
 
-    plt.savefig("plot.png")
+    fig, ax = plt.subplots()
+    ax.plot(accuracies)
+    ax.set_title("algorithm: " + args.algorithm + ", ratio (only if applicable): " + str(args.ratio))
+    ax.set_xlabel('epoch')
+    ax.set_ylabel('accuracy %')
+    ax.set_xticks(np.arange(0, args.epochs))
+    ax.set_ylim(bottom=0.97, top=1)
+    ax.grid(True)
+    plt.savefig("mnist-" + str(args.algorithm) + "-" + str(args.ratio) + "-accuracy.png")
+
 
     if args.save_model:
         torch.save(model.state_dict(), "mnist_cnn.pt")
