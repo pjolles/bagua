@@ -16,7 +16,7 @@ class Compressor():
     stages = 2
     target_stages = 4 # 
     first_ratio = 0.25
-    adaptation_freq = 1
+    adaptation_freq = 5
     epsilon_h = 0.1
     epsilon_l = 0.1
     max_stages = 100
@@ -33,6 +33,7 @@ class Compressor():
         ada_stages = True, 
         indices: Tensor = None, 
         values: Tensor = None,
+        residual: Tensor = None,
         ):
 
         # not sure if this is useful
@@ -49,40 +50,54 @@ class Compressor():
                 return cur_stages
 
             def thresh_estimation_exp(tensor: Tensor, ratio):
-                mu = tensor.abs().mean()
+                mu = tensor.mean()
                 return -mu * log(ratio)
-
-            def apply_threshold(tensor: Tensor, threshold):
-                tensor_copy = tensor.clone()
-                tensor_copy2 = tensor_copy.view(-1)
-                abs_tensor_copy = tensor.clone().abs().view(-1)
-                ones = abs_tensor_copy > threshold
-                tensor_copy2.mul_(ones)
-                return tensor_copy
             
             start = time.time()
 
-            logging.debug("Tensor of size {}:".format(tensor.size()))
-            for i in range(self.stages):
-                ratio_per_stage = math.pow(self.target_ratio, 1/self.stages)
+            #logging.debug("Tensor of size {}:".format(tensor.size()))
+            k = math.ceil(self.target_ratio * tensor.numel())
+            print(tensor.size())
+
+            tensor = tensor.view(-1)
+            abs_tensor = tensor.view(-1).abs()
+            temp = abs_tensor.clone()
+            nnz = temp.nonzero().squeeze().view(-1)
+            temp = temp[nnz]
+            if temp.numel() > 0:
+                temp.sub_(temp.min().item())
+
+            ratio = self.target_ratio * (max(temp.numel(), 1) / tensor.numel())
+            ratio_per_stage = math.pow(ratio, 1/self.stages)
+
+            print(temp.size())
+
+            for i in range(self.stages - 1):
                 thresh_start = time.time()
-                threshold = thresh_estimation_exp(tensor, ratio_per_stage)
+                threshold = thresh_estimation_exp(temp, ratio_per_stage)
                 thresh_end = time.time()
-                logging.debug("{:.4f}: thresh_estimation_exp()".format(thresh_end - thresh_start))
-                tensor = apply_threshold(tensor, threshold)
+                logging.debug("    {:.4f}: thresh_estimation_exp()".format(thresh_end - thresh_start))
+
+                ones = temp > threshold
+                nnz = ones.nonzero().squeeze().view(-1)
+                temp = temp[nnz]
+                temp.sub_(threshold)
                 thresh_apply = time.time()
-                logging.debug("{:.4f}: apply_threshold()".format(thresh_apply-thresh_end))
+                logging.debug("    {:.4f}: apply_threshold()".format(thresh_apply-thresh_end))
+                print(temp.size())
 
-            numel = tensor.numel()
-            k = math.ceil(self.target_ratio * numel)
+            print(k)
 
+            threshold = thresh_estimation_exp(temp, ratio_per_stage)
             start_indices = time.time()
-            indices = tensor.nonzero(as_tuple=True)
+            ones = tensor.abs() > threshold
+            indices = ones.nonzero().squeeze().view(-1)
             end_indices = time.time()
-            logging.debug("{:.4f}: creating index tensor".format(end_indices-start_indices))
+            logging.debug("    {:.4f}: creating index tensor".format(end_indices-start_indices))
+
             values = tensor[indices]
             end_values = time.time()
-            logging.debug("{:.4f}: creating value tensor".format(end_values-end_indices))
+            logging.debug("    {:.4f}: creating value tensor".format(end_values-end_indices))
 
 
             if ada_stages:
@@ -96,18 +111,15 @@ class Compressor():
                     logging.info("adapted to {} stages".format(self.stages))
                     self.k_total = 0
                 end_ada = time.time()
-                logging.debug("{:.4f}: Stage adaptation".format(end_ada-start_ada))
+                logging.debug("    {:.4f}: Stage adaptation".format(end_ada-start_ada))
 
             if fixed_size:
                 start_adjust = time.time()
                 k_temp = values.numel()
                 if k_temp < k:
                     #print("padding tensor")
-                    new_indices = ()
-                    for t in indices:
-                        new_t = torch.zeros(k, device='cuda', dtype=torch.int64)
-                        new_t[0:k_temp] = t
-                        new_indices = new_indices + (new_t,)
+                    new_indices = torch.zeros(k, device='cuda', dtype=torch.int64)
+                    new_indices[0:k_temp] = indices
                     indices = new_indices
 
                     new_val = torch.zeros(k, device='cuda')
@@ -115,20 +127,16 @@ class Compressor():
                     values = new_val
 
                     end_padding = time.time()
-                    logging.debug("{:.4f}: padding".format(end_padding-start_adjust))
+                    logging.debug("    {:.4f}: padding".format(end_padding-start_adjust))
 
                 if k_temp > k:
                     # TODO take random elements instead of the first k
                     #print("shortening tensor")
-                    new_indices = ()
-                    for t in indices:
-                        new_t = t[0:k]
-                        new_indices = new_indices + (new_t,)
-                    indices = new_indices
+                    indices = indices[0:k]
 
                     values = values[0:k]
                     end_shortening = time.time()
-                    logging.debug("{:.4f}: shortening".format(end_shortening-start_adjust))
+                    logging.debug("    {:.4f}: shortening".format(end_shortening-start_adjust))
 
             end = time.time()
             logging.debug("{:.4f}: Total compression time".format(end-start))
@@ -142,7 +150,8 @@ class Compressor():
                 if size is None:
                     raise Exception("Either size or out tensor must be given")
                 out = torch.zeros(size=[d for d in size], device='cuda')
-            out[indices] = values
+            out2 = out.view(-1)
+            out2[indices] = values
             end = time.time()
             logging.debug("{:.4f}: Total decompression time".format(end-start))
 
