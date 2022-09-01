@@ -72,6 +72,7 @@ class SidcoImpl(AlgorithmImpl):
         nranks = len(bagua_ddp.process_group.ranks)
 
         # Initialize the tensors to be exchanged
+        residuals = {}
         indices = {}
         values = {}
         recv_indices = {}
@@ -79,6 +80,7 @@ class SidcoImpl(AlgorithmImpl):
         for btensor in bucket.tensors:
             name = btensor.bagua_tensor_name
             t = btensor.bagua_getter_closure()
+            residuals[name] = torch.zeros_like(t.view(-1))
             indices[name] = ()
             recv_indices[name] = ()
             indices[name] = torch.zeros(math.ceil(self.ratio * t.numel()), 
@@ -104,10 +106,11 @@ class SidcoImpl(AlgorithmImpl):
 
                 #logging.debug("compressing tensor {} ...".format(name))
                 time_1 = time.time()
-                ind, val = self.compressors[name].compress(
+                ind, val, residuals[name] = self.compressors[name].compress(
                     tensor, 
                     fixed_size = True,
                     ada_stages = True,
+                    residual = residuals[name]
                 ) #TODO adapt stages
 
                 indices[name].copy_(ind)
@@ -133,7 +136,12 @@ class SidcoImpl(AlgorithmImpl):
                 tensor.div_(nranks)
                 
                 #logging.debug("recompressing tensor for broadcasting...")
-                ind, val = self.compressors[name].compress(tensor, ada_stages=False)
+                ind, val, residual = self.compressors[name].compress(
+                    tensor,
+                    fixed_size = True,
+                    ada_stages = False,
+                    residual = residuals[name]
+                )
                 indices[name].copy_(ind)
                 values[name].copy_(val)
 

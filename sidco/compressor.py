@@ -19,7 +19,7 @@ class Compressor():
     adaptation_freq = 5
     epsilon_h = 0.1
     epsilon_l = 0.1
-    max_stages = 100
+    max_stages = 20
 
     
     def __init__(self, ratio: float = 0.1) -> None:
@@ -62,6 +62,10 @@ class Compressor():
             tensor = tensor.view(-1)
             abs_tensor = tensor.view(-1).abs()
             temp = abs_tensor.clone()
+            
+            if residual != None:
+                temp.add_(residual)
+
             nnz = temp.nonzero().squeeze().view(-1)
             temp = temp[nnz]
             if temp.numel() > 0:
@@ -137,11 +141,14 @@ class Compressor():
                     values = values[0:k]
                     end_shortening = time.time()
                     logging.debug("    {:.4f}: shortening".format(end_shortening-start_adjust))
+            
+            residual.copy_(tensor)
+            residual[indices] = 0.0
 
             end = time.time()
             logging.debug("{:.4f}: Total compression time".format(end-start))
 
-            return indices, values
+            return indices, values, residual
 
     def decompress(self, indices: Tensor, values: Tensor, out: Tensor = None, size: torch.Size = None):
         #with torch.no_grad():
